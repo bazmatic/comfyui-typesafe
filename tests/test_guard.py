@@ -75,7 +75,7 @@ class GuardTests(unittest.IsolatedAsyncioTestCase):
     async def test_registration_without_credentials(self):
         with patch.dict(os.environ, {'TYPESAFE_API_KEY': ''}):
             extension = await pkg.comfy_entrypoint()
-        self.assertEqual(await extension.get_node_list(), [Guard])
+        self.assertEqual(await extension.get_node_list(), [Guard, pkg.TypeSafeLoraCandidate, pkg.TypeSafeLoraSelect, pkg.TypeSafeLoraApply])
         schema = Guard.GET_SCHEMA()
         self.assertEqual(schema.node_id, 'TypeSafeTextGuard')
         self.assertEqual(len(schema.outputs), 3)

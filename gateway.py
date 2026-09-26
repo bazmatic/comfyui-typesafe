@@ -9,7 +9,7 @@ from typing import Protocol
 
 import aiohttp
 
-from .domain import DecisionMetadata, Judgment, NoulJudgment, NoulQuestion, Question, nonblank
+from .domain import ChoiceJudgment, ChoiceQuestion, DecisionMetadata, Judgment, NoulJudgment, NoulQuestion, Question, nonblank
 from .errors import ConfigurationError, ProviderProtocolError, ProviderUnavailable
 
 ENDPOINT = "https://api.typesafe.ai/v1/systemone"
@@ -17,7 +17,7 @@ MAX_BODY = 1024 * 1024
 
 
 class JudgmentGateway(Protocol):
-    async def evaluate(self, state: dict[str, str], question: Question, model: str) -> Judgment: ...
+    async def evaluate(self, state: dict[str, object], question: Question, model: str) -> Judgment: ...
 
 
 def parse_noul(payload, model):
@@ -39,6 +39,24 @@ def parse_noul(payload, model):
         raise ProviderProtocolError("TypeSafe returned an invalid Noul response.") from None
 
 
+def parse_choice(payload, model, question):
+    try:
+        if set(payload["answers"]) != {"decision"}:
+            raise ValueError
+        answer = payload["answers"]["decision"]
+        if answer["type"] != "choice" or not isinstance(answer["probabilities"], dict):
+            raise ValueError
+        usage = payload["usage"]
+        judgment = ChoiceJudgment(
+            answer["choice"], tuple(answer["probabilities"].items()), answer["confidence"],
+            DecisionMetadata(model, payload["model"], usage["input_tokens"], usage["output_tokens"]),
+        )
+        judgment.validate_options(key for key, _ in question.criteria)
+        return judgment
+    except (KeyError, TypeError, ValueError, ProviderProtocolError):
+        raise ProviderProtocolError("TypeSafe returned an invalid Choice response.") from None
+
+
 def retry_delay(header):
     if header is not None:
         try:
@@ -54,7 +72,7 @@ def retry_delay(header):
 class TypeSafeHttpGateway:
     async def evaluate(self, state, question, model):
         nonblank(model, "Model")
-        if not isinstance(question, NoulQuestion):
+        if not isinstance(question, (NoulQuestion, ChoiceQuestion)):
             raise ConfigurationError("Unsupported judgment question.")
         key = os.environ.get("TYPESAFE_API_KEY", "").strip()
         if not key or any(ord(c) < 32 or ord(c) > 126 for c in key):
@@ -65,8 +83,11 @@ class TypeSafeHttpGateway:
                 raise ValueError
         except ValueError:
             raise ConfigurationError("TYPESAFE_TIMEOUT_SECONDS must be between 1 and 120.") from None
-        request = {"state": state, "model": model, "questions": {
-            "decision": {"type": "noul", "instructions": question.instructions}}}
+        question_body = {"type": "noul", "instructions": question.instructions}
+        if isinstance(question, ChoiceQuestion):
+            question.__post_init__()
+            question_body.update(type="choice", criteria=dict(question.criteria))
+        request = {"state": state, "model": model, "questions": {"decision": question_body}}
         deadline = asyncio.get_running_loop().time() + seconds
 
         async def request_with_deadline():
@@ -95,6 +116,8 @@ class TypeSafeHttpGateway:
                                 payload = json.loads(body)
                             except (ValueError, UnicodeError, RecursionError):
                                 raise ProviderProtocolError("TypeSafe returned invalid JSON.") from None
+                            if isinstance(question, ChoiceQuestion):
+                                return parse_choice(payload, model, question)
                             return parse_noul(payload, model)
                     await asyncio.sleep(delay)
         try:
