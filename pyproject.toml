@@ -1,0 +1,10 @@
+[project]
+name = "comfyui-typesafe"
+version = "0.1.0"
+description = "TypeSafe visual decision nodes for ComfyUI"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["aiohttp"]
+
+[project.urls]
+Repository = "https://github.com/bazmatic/comfyui-typesafe"

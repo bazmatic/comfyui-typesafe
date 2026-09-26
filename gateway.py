@@ -1,0 +1,105 @@
+import asyncio
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+import json
+import math
+import os
+import random
+from typing import Protocol
+
+import aiohttp
+
+from .domain import DecisionMetadata, Judgment, NoulJudgment, NoulQuestion, Question, nonblank
+from .errors import ConfigurationError, ProviderProtocolError, ProviderUnavailable
+
+ENDPOINT = "https://api.typesafe.ai/v1/systemone"
+MAX_BODY = 1024 * 1024
+
+
+class JudgmentGateway(Protocol):
+    async def evaluate(self, state: dict[str, str], question: Question, model: str) -> Judgment: ...
+
+
+def parse_noul(payload, model):
+    try:
+        if set(payload["answers"]) != {"decision"}:
+            raise ValueError
+        answer = payload["answers"]["decision"]
+        if answer["type"] != "noul":
+            raise ValueError
+        returned_model = payload["model"]
+        if not isinstance(returned_model, str) or not returned_model.strip():
+            raise ValueError
+        usage = payload["usage"]
+        counts = (usage["input_tokens"], usage["output_tokens"])
+        if any(type(v) is not int or v < 0 for v in counts):
+            raise ValueError
+        return NoulJudgment(answer["noul"], DecisionMetadata(model, returned_model, *counts))
+    except (KeyError, TypeError, ValueError, ProviderProtocolError):
+        raise ProviderProtocolError("TypeSafe returned an invalid Noul response.") from None
+
+
+def retry_delay(header):
+    if header is not None:
+        try:
+            if header.strip().isdigit():
+                return float(header)
+            date = parsedate_to_datetime(header)
+            return max(0.0, (date - datetime.now(timezone.utc)).total_seconds())
+        except (ValueError, TypeError, OverflowError):
+            pass
+    return random.uniform(0.2, 0.5)
+
+
+class TypeSafeHttpGateway:
+    async def evaluate(self, state, question, model):
+        nonblank(model, "Model")
+        if not isinstance(question, NoulQuestion):
+            raise ConfigurationError("Unsupported judgment question.")
+        key = os.environ.get("TYPESAFE_API_KEY", "").strip()
+        if not key or any(ord(c) < 32 or ord(c) > 126 for c in key):
+            raise ConfigurationError("Set a valid TYPESAFE_API_KEY in the ComfyUI server environment.")
+        try:
+            seconds = float(os.environ.get("TYPESAFE_TIMEOUT_SECONDS", "30"))
+            if not math.isfinite(seconds) or not 1 <= seconds <= 120:
+                raise ValueError
+        except ValueError:
+            raise ConfigurationError("TYPESAFE_TIMEOUT_SECONDS must be between 1 and 120.") from None
+        request = {"state": state, "model": model, "questions": {
+            "decision": {"type": "noul", "instructions": question.instructions}}}
+        deadline = asyncio.get_running_loop().time() + seconds
+
+        async def request_with_deadline():
+            async with aiohttp.ClientSession() as session:
+                for attempt in range(2):
+                    remaining = deadline - asyncio.get_running_loop().time()
+                    timeout = aiohttp.ClientTimeout(total=remaining, connect=min(10, remaining))
+                    async with session.post(ENDPOINT, json=request,
+                                            headers={"Authorization": f"Bearer {key}"},
+                                            timeout=timeout, allow_redirects=False) as response:
+                        if response.status in (429, 529) and attempt == 0:
+                            delay = retry_delay(response.headers.get("Retry-After"))
+                            if delay >= deadline - asyncio.get_running_loop().time():
+                                raise ProviderUnavailable("TypeSafe retry exceeds the evaluation deadline.")
+                        elif response.status != 200:
+                            if response.status in (401, 403, 422):
+                                raise ConfigurationError(f"TypeSafe HTTP {response.status}; check credentials and request configuration.")
+                            raise ProviderUnavailable(f"TypeSafe HTTP {response.status}; evaluation stopped.")
+                        else:
+                            body = bytearray()
+                            async for chunk in response.content.iter_chunked(65536):
+                                body.extend(chunk)
+                                if len(body) > MAX_BODY:
+                                    raise ProviderProtocolError("TypeSafe response exceeds 1 MiB.")
+                            try:
+                                payload = json.loads(body)
+                            except (ValueError, UnicodeError, RecursionError):
+                                raise ProviderProtocolError("TypeSafe returned invalid JSON.") from None
+                            return parse_noul(payload, model)
+                    await asyncio.sleep(delay)
+        try:
+            return await asyncio.wait_for(request_with_deadline(), timeout=seconds)
+        except (asyncio.TimeoutError, TimeoutError):
+            raise ProviderUnavailable("TypeSafe evaluation timed out; retry the prompt.") from None
+        except aiohttp.ClientError:
+            raise ProviderUnavailable("TypeSafe connection failed; retry the prompt.") from None
