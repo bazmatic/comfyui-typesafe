@@ -1,22 +1,25 @@
 # TypeSafe visual decision nodes
 
-Implementation in progress: [Text Guard](docs/issues/01-text-guard.md),
+Implemented: [Text Guard](docs/issues/01-text-guard.md),
 [LoRA Candidate](docs/issues/02-lora-candidate.md),
 [LoRA Selector](docs/issues/03-lora-selector.md), and
 [Apply Selected LoRA](docs/issues/04-apply-selected-lora.md) are implemented and registered
-as native V3 nodes. Verified example workflows remain for the next ticket.
+as native V3 nodes. Start with the [two example workflows](examples/README.md).
 
 See the [technical design](docs/design.md) and [implementation tickets](docs/issues/).
 These documents and tickets were brought across from the host workspace when this
 repository was created. Continue package planning here.
 
-## Text Guard setup
+## Installation and Text Guard setup
 
 Clone this repository into ComfyUI's custom-node directory, then restart ComfyUI:
 
 ```sh
 git clone https://github.com/bazmatic/comfyui-typesafe.git /path/to/ComfyUI/custom_nodes/comfyui-typesafe
 ```
+
+Install the dependency listed in `pyproject.toml` with the same Python environment
+that runs ComfyUI (`python -m pip install aiohttp`); no TypeSafe SDK is required.
 
 This repository is private, so cloning requires GitHub access. Set
 `TYPESAFE_API_KEY` in the server environment before requesting a judgment. No key
@@ -28,7 +31,13 @@ and connect its text output before work that should depend on a successful guard
 At or above `stop_threshold`, the node raises an execution error and supplies no
 normal outputs. Below it, the original text passes through alongside probability
 and JSON decision details. A rejection does not undo completed work, clear queued
-prompts or globally interrupt other work.
+prompts or globally interrupt other work. Independent branches may already have
+executed; rejection does not interrupt other users.
+
+On the tested host, pressing Interrupt does not cancel a pending TypeSafe HTTP
+request. Downstream work stops when the request returns, or the configured request
+deadline ends the wait with an error. The default deadline is 30 seconds. See the
+[measured interrupt results](docs/verification.md).
 
 Unchanged successful runs use ComfyUI's cache. Change `refresh_id` to request a
 fresh judgment; it is not a model seed. Changing model or threshold also reruns
@@ -114,6 +123,21 @@ nodes without Candidate ancestry. Each application creates a fresh core loader,
 so filename-only weight caching cannot reuse stale weights after replacement.
 The none path performs no file access even during this fingerprint pass.
 
+## Troubleshooting
+
+| Failure | Action |
+| --- | --- |
+| `ConfigurationError` | Set the server's `TYPESAFE_API_KEY`, check the 1–120 second timeout, and correct invalid inputs or missing/duplicate installed LoRA names. Restart the server after changing its environment. |
+| `ProviderUnavailable` | Check server network access and credentials, provider availability and the configured deadline, then rerun. This is an error, not a none selection. |
+| `ProviderProtocolError` | The response did not match the supported provider contract. Check the requested model and provider API compatibility; do not treat this as a valid judgment. |
+| `GuardRejected` | Inspect the condition, reported probability and threshold. Correct the upstream result or deliberately revise the condition before retrying. |
+| `LoraApplicationError` | Re-select an installed file and confirm checkpoint/LoRA compatibility. Read the underlying core loader message; compatibility warnings remain visible. |
+
+Startup and Candidate metadata evaluation require no credentials. Guard and
+Selector require credentials when they actually request a judgment. No API key
+belongs in workflow JSON. Only the four TypeSafe nodes above are public; the
+examples also use ComfyUI's built-in nodes.
+
 ## Offline validation
 
 From the ComfyUI root, using its Python environment:
@@ -126,7 +150,7 @@ Tests use a fake gateway and a loopback HTTP server with fake credentials. They
 make no paid API calls. The suite exercises the actual CPU-mode prompt executor,
 including dependent-node rejection, namespaced candidate/selection socket wiring,
 Autogrow packing, mapped text batches, widget validation, selection cache reuse,
-and cache invalidation on LoRA replacement/removal. The 36-test suite also checks
+and cache invalidation on LoRA replacement/removal. The 38-test suite also checks
 Choice distributions, exact ties, threshold equality, none outcomes and 100 candidates. Temporary LoRA files
 contain deliberately invalid weight data to verify metadata-only execution. Application
 tests exercise the real core loader with mocked weight decoding/patching, exact
@@ -146,10 +170,9 @@ environment and give the runner its ComfyUI path:
 ComfyUI and its dependencies must already be installed; the custom-node package
 does not bundle them. The tests themselves use Python's standard unittest library.
 
-Validated on Python 3.10.13 with backend revision
-`3c1a1a2df82fc6c7aa20a3c8301d1c632e1a1d87`. Frontend package 1.37.11 was smoke-tested in Chrome for custom Candidate/Selector
-connections, growing sockets and workflow save/close/reopen. This UI check made no
-provider calls. Real host interrupt timing remains to be verified.
+See [verification results](docs/verification.md) for exact host/frontend versions,
+exported graph execution, browser save/reopen checks and measured interrupt timing.
+These are offline integration checks; opt-in live quality evaluation is ticket 06.
 The provider contract was checked against the
 [HTTP reference](https://docs.typesafe.ai/api) and
 [Noul documentation](https://docs.typesafe.ai/primitives/noul),
