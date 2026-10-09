@@ -114,8 +114,6 @@ class TypeSafeLoraSelect(io.ComfyNode):
                 raise ConfigurationError("Invalid LoRA candidate socket name.")
             numbered.append((int(match[1]), validate_candidate(candidate)))
         ordered = tuple(candidate for _, candidate in sorted(numbered))
-        if len({c.name for c in ordered}) != len(ordered):
-            raise ConfigurationError("Each connected candidate must use a different installed LoRA.")
         for candidate in ordered:
             cls.runtime.validate_file(candidate.name)
         selection = await cls.engine.select_lora(text, ordered, min_confidence, model)

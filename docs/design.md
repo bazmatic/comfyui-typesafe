@@ -147,8 +147,8 @@ Outputs:
 - `trigger_words: STRING` — selected candidate's text, or empty for none.
 - `decision_details: STRING` — raw winner, probabilities and effective outcome.
 
-Reject duplicate installed filenames rather than creating competing entries for
-the same LoRA. Reject missing files before inference. Order sockets by numeric
+Allow several candidates to name the same installed file, so one LoRA can carry
+different descriptions, strengths or trigger words. Reject missing files before inference. Order sockets by numeric
 suffix rather than lexicographically (`candidate2` precedes `candidate10`). Map
 them to request-local IDs such as `candidate_0`; reserve `none` internally.
 

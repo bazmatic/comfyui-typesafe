@@ -69,8 +69,8 @@ cache keys.
 ## LoRA Selector setup
 
 Add **TypeSafe · LoRA Selector**, enter or connect the selection text, and connect
-1–100 Candidate outputs to its growing candidate inputs. Each candidate must name
-a different installed file. The node verifies records and installed files before
+1–100 Candidate outputs to its growing candidate inputs. Several candidates may name
+the same installed file with different descriptions, strengths or trigger words. The node verifies records and installed files before
 making one TypeSafe Choice request over the candidates plus an explicit none option.
 Input socket suffixes determine numeric ordering; filenames never come from generated text.
 
@@ -121,7 +121,7 @@ The none path performs no file access even during this fingerprint pass.
 
 | Failure | Action |
 | --- | --- |
-| `ConfigurationError` | Set the server's `TYPESAFE_API_KEY`, check the 1–120 second timeout, and correct invalid inputs or missing/duplicate installed LoRA names. Restart the server after changing its environment. |
+| `ConfigurationError` | Set the server's `TYPESAFE_API_KEY`, check the 1–120 second timeout, and correct invalid inputs or missing installed LoRA names. Restart the server after changing its environment. |
 | `ProviderUnavailable` | Check server network access and credentials, provider availability and the configured deadline, then rerun. This is an error, not a none selection. |
 | `ProviderProtocolError` | The response did not match the supported provider contract. Check the requested model and provider API compatibility; do not treat this as a valid judgment. |
 | `GuardRejected` | Inspect the condition, reported probability and threshold. Correct the upstream result or deliberately revise the condition before retrying. |

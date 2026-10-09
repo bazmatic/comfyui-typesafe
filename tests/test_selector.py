@@ -86,12 +86,19 @@ class SelectorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.fake.calls[-1][1].criteria), 101)
         self.assertEqual(self.fake.calls[-1][0]['candidates'][99]['name'], '99.safetensors')
 
+    async def test_same_lora_with_different_trigger_words(self):
+        other = domain.LoraCandidate('ink.safetensors', 'Ink portrait', 1.0, 1.0, 'PORTRAIT')
+        self.fake.payload = response('candidate_1', {'candidate_0': 0.1, 'candidate_1': 0.8, 'none': 0.1}, 0.9)
+        result = (await Selector.execute('draw', {'candidate0': self.candidate, 'candidate1': other})).result
+        self.assertIs(result[0].candidate_or_none, other)
+        self.assertEqual(result[1:5], ('ink.safetensors', True, 0.9, 'PORTRAIT'))
+        self.assertEqual([c['description'] for c in self.fake.calls[-1][0]['candidates']], ['Ink drawing', 'Ink portrait'])
+
     async def test_configuration_preflight_no_inference(self):
         forged = domain.LoraCandidate('ink.safetensors', 'ink')
         object.__setattr__(forged, 'strength_model', float('nan'))
         invalid = [dict(candidates=x) for x in ({}, [], {'candidate0': []}, {'candidate0': 'ink'},
                    {'candidate0': forged}, {'candidate100': self.candidate}, {'candidate01': self.candidate},
-                   {'candidate0': self.candidate, 'candidate1': self.candidate},
                    {'candidate0': domain.LoraCandidate('missing.safetensors', 'missing')})]
         invalid += [dict(text=x) for x in ('', None, ' ')]
         invalid += [dict(min_confidence=x) for x in (True, -1, 2, float('nan'), float('inf'))]

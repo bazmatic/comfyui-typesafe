@@ -37,8 +37,6 @@ class DecisionEngine:
             raise ConfigurationError("Connect between 1 and 100 LoRA candidates.")
         for candidate in candidates:
             validate_candidate(candidate)
-        if len({c.name for c in candidates}) != len(candidates):
-            raise ConfigurationError("Each connected candidate must use a different installed LoRA.")
         options = tuple((f"candidate_{i}", c) for i, c in enumerate(candidates))
         question = ChoiceQuestion(
             "Which single LoRA best fits `text`, using the descriptions in `candidates`? "
