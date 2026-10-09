@@ -298,8 +298,8 @@ copies known settings. [Function-calling cookbook](https://docs.typesafe.ai/cook
 - Use an async context-managed HTTP session per evaluation initially. No global
   event-loop-bound session or import-time network activity.
 - Default overall evaluation deadline: 30 seconds, including backoff and reading.
-  Permit a server environment setting from 1–120 seconds. Use a shorter connect
-  timeout of at most 10 seconds, bounded by the remaining deadline.
+  Permit a server environment setting from 1–120 seconds. No separate connect
+  timeout: connecting can stall for seconds while ComfyUI loads or runs a model.
 - At most two attempts, retrying only explicit HTTP 429 and 529 responses.
   Respect a valid `Retry-After` when it fits the remaining deadline; otherwise fail.
   Without it use a short jittered backoff. Do not retry authentication, validation,

@@ -88,13 +88,13 @@ class TypeSafeHttpGateway:
             question.__post_init__()
             question_body.update(type="choice", criteria=dict(question.criteria))
         request = {"state": state, "model": model, "questions": {"decision": question_body}}
-        deadline = asyncio.get_running_loop().time() + seconds
 
         async def request_with_deadline():
+            deadline = asyncio.get_running_loop().time() + seconds
             async with aiohttp.ClientSession() as session:
                 for attempt in range(2):
                     remaining = deadline - asyncio.get_running_loop().time()
-                    timeout = aiohttp.ClientTimeout(total=remaining, connect=min(10, remaining))
+                    timeout = aiohttp.ClientTimeout(total=remaining)
                     async with session.post(ENDPOINT, json=request,
                                             headers={"Authorization": f"Bearer {key}"},
                                             timeout=timeout, allow_redirects=False) as response:
@@ -120,9 +120,21 @@ class TypeSafeHttpGateway:
                                 return parse_choice(payload, model, question)
                             return parse_noul(payload, model)
                     await asyncio.sleep(delay)
+        # ComfyUI runs sync nodes (sampling, model loads) on its event loop, so a request
+        # awaited there starves and misses its deadline. Run it on a private loop instead.
+        loop = asyncio.new_event_loop()
+        task = loop.create_task(asyncio.wait_for(request_with_deadline(), timeout=seconds))
+        worker = asyncio.get_running_loop().run_in_executor(None, loop.run_until_complete, asyncio.wait([task]))
         try:
-            return await asyncio.wait_for(request_with_deadline(), timeout=seconds)
+            await asyncio.shield(worker)
+            return task.result()
+        except asyncio.CancelledError:
+            loop.call_soon_threadsafe(task.cancel)
+            raise
         except (asyncio.TimeoutError, TimeoutError):
             raise ProviderUnavailable("TypeSafe evaluation timed out; retry the prompt.") from None
         except aiohttp.ClientError:
             raise ProviderUnavailable("TypeSafe connection failed; retry the prompt.") from None
+        finally:
+            await asyncio.wait([worker])
+            loop.close()
